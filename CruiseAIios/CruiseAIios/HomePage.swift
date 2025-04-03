@@ -187,11 +187,11 @@ struct HomePage: View {
                             color: Color.blue,
                             content: {
                                 VStack(alignment: .leading, spacing: 15) {
-                                    InfoRow(icon: "1.circle.fill", title: "Start a Drive", description: "Tap 'Start a Drive' to begin recording your trip")
-                                    InfoRow(icon: "2.circle.fill", title: "Allow Permissions", description: "Grant camera and location access when prompted")
-                                    InfoRow(icon: "3.circle.fill", title: "Monitor Speed", description: "View your accurate speed with color indicators")
-                                    InfoRow(icon: "4.circle.fill", title: "Get Warnings", description: "Receive alerts when exceeding speed limits")
-                                    InfoRow(icon: "5.circle.fill", title: "Share Trip", description: "Share your trip details when finished")
+                                    InfoRow(icon: "camera.fill", title: "Object Detection", description: "Uses your phone's camera to detect vehicles, pedestrians, and road signs in real time")
+                                    InfoRow(icon: "rectangle.dashed", title: "Visual Feedback", description: "Displays bounding boxes directly on the live camera feed")
+                                    InfoRow(icon: "arrow.left.and.right", title: "Depth Estimation", description: "Estimates relative depth to understand object proximity")
+                                    InfoRow(icon: "speedometer", title: "Speed Tracking", description: "Tracks your current speed using GPS and shows it on-screen")
+                                    InfoRow(icon: "hand.raised.fill", title: "Simple & Safe", description: "Designed for safety and simplicity—no extra hardware needed")
                                 }
                                 .padding(.vertical, 10)
                             }
@@ -205,11 +205,11 @@ struct HomePage: View {
                             isGlowing: true,
                             content: {
                                 VStack(alignment: .leading, spacing: 15) {
-                                    InfoRow(icon: "bolt.fill", title: "AI Voice Assistant", description: "Hands-free control with voice commands")
-                                    InfoRow(icon: "car.2.fill", title: "Lane Detection", description: "Stay in your lane with visual guidance")
-                                    InfoRow(icon: "cloud.fill", title: "Cloud Sync", description: "Access your driving data across devices")
-                                    InfoRow(icon: "chart.bar.fill", title: "Advanced Analytics", description: "Get insights to improve your driving")
-                                    InfoRow(icon: "person.2.fill", title: "Family Sharing", description: "Monitor family members' driving habits")
+                                    InfoRow(icon: "exclamationmark.triangle.fill", title: "Lane Drift Detection", description: "Visual and audio alerts when drifting from your lane")
+                                    InfoRow(icon: "car.2.fill", title: "Collision Warning", description: "Advanced warning system based on depth + motion")
+                                    InfoRow(icon: "stopsign.fill", title: "Traffic Violation Detection", description: "Red light and stop sign violation detection")
+                                    InfoRow(icon: "chart.bar.fill", title: "Driver Analytics", description: "Smart trip summaries and driver score analytics")
+                                    InfoRow(icon: "message.fill", title: "Guardian Alerts", description: "Seamless SMS alerts for parents or guardians")
                                 }
                                 .padding(.vertical, 10)
                             }
@@ -375,14 +375,8 @@ struct HistoryView: View {
     @Environment(\.presentationMode) var presentationMode
     @ObservedObject var appState: AppState
     
-    // Sample trip data
-    let trips = [
-        TripData(date: "Apr 2, 2025", duration: "45 min", distance: "15.2 mi", avgSpeed: "32 mph"),
-        TripData(date: "Apr 1, 2025", duration: "28 min", distance: "8.7 mi", avgSpeed: "28 mph"),
-        TripData(date: "Mar 30, 2025", duration: "1h 12m", distance: "42.5 mi", avgSpeed: "35 mph"),
-        TripData(date: "Mar 28, 2025", duration: "22 min", distance: "5.3 mi", avgSpeed: "24 mph"),
-        TripData(date: "Mar 25, 2025", duration: "33 min", distance: "12.1 mi", avgSpeed: "30 mph")
-    ]
+    // Sample trip data - set to empty array to simulate no trips
+    let trips: [TripData] = []
     
     var body: some View {
         NavigationView {
@@ -394,14 +388,51 @@ struct HistoryView: View {
                     .edgesIgnoringSafeArea(.all)
                     .animation(.easeInOut(duration: 0.5), value: appState.theme)
                 
-                VStack {
-                    List {
-                        ForEach(trips) { trip in
-                            TripRow(trip: trip)
-                                .listRowBackground(Color.white.opacity(0.1))
+                if trips.isEmpty {
+                    // No trips view
+                    VStack(spacing: 25) {
+                        Image(systemName: "car.circle")
+                            .font(.system(size: 80))
+                            .foregroundColor(.white.opacity(0.8))
+                        
+                        Text("No Trips Yet")
+                            .font(.system(size: 24, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                        
+                        Text("Your driving history will appear here after you complete your first trip with CruiseAI.")
+                            .font(.system(size: 16))
+                            .foregroundColor(.white.opacity(0.8))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 40)
+                        
+                        Button(action: {
+                            presentationMode.wrappedValue.dismiss()
+                        }) {
+                            HStack {
+                                Image(systemName: "car.fill")
+                                Text("Start Your First Drive")
+                            }
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding()
+                            .background(Color.green.opacity(0.8))
+                            .cornerRadius(15)
+                            .shadow(color: Color.black.opacity(0.2), radius: 5, x: 0, y: 3)
                         }
+                        .padding(.top, 20)
                     }
-                    .listStyle(InsetGroupedListStyle())
+                    .padding()
+                } else {
+                    // Trip list view
+                    VStack {
+                        List {
+                            ForEach(trips) { trip in
+                                TripRow(trip: trip)
+                                    .listRowBackground(Color.white.opacity(0.1))
+                            }
+                        }
+                        .listStyle(InsetGroupedListStyle())
+                    }
                 }
             }
             .navigationBarTitle("Drive History", displayMode: .inline)
@@ -478,12 +509,12 @@ struct ProfileView: View {
     @Environment(\.presentationMode) var presentationMode
     @ObservedObject var appState: AppState
     
-    // Sample user stats
-    let totalDrives = 42
-    let totalDistance = 687.5 // miles
-    let totalDuration = 1245 // minutes
-    let avgSpeed = 33.2 // mph
-    let topSpeed = 78.5 // mph
+    // User stats - initialized to zero for new users
+    let totalDrives = 0
+    let totalDistance = 0.0 // miles
+    let totalDuration = 0 // minutes
+    let avgSpeed = 0.0 // mph
+    let topSpeed = 0.0 // mph
     
     var body: some View {
         NavigationView {
@@ -517,19 +548,60 @@ struct ProfileView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.leading)
                             
-                            // Stats grid
-                            LazyVGrid(columns: [
-                                GridItem(.flexible()),
-                                GridItem(.flexible())
-                            ], spacing: 15) {
-                                StatCard(title: "Total Drives", value: "\(totalDrives)", icon: "number.circle.fill")
-                                StatCard(title: "Total Distance", value: "\(totalDistance) mi", icon: "map.fill")
-                                StatCard(title: "Drive Time", value: formatMinutes(totalDuration), icon: "clock.fill")
-                                StatCard(title: "Avg Speed", value: "\(avgSpeed) mph", icon: "speedometer")
-                                StatCard(title: "Top Speed", value: "\(topSpeed) mph", icon: "flame.fill")
-                                StatCard(title: "Fuel Saved", value: "12.3 gal", icon: "leaf.fill")
+                            if totalDrives == 0 {
+                                // No drives yet
+                                VStack(spacing: 20) {
+                                    Image(systemName: "car.circle")
+                                        .font(.system(size: 50))
+                                        .foregroundColor(.white.opacity(0.8))
+                                    
+                                    Text("No Driving Data Yet")
+                                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                                        .foregroundColor(.white)
+                                    
+                                    Text("Complete your first drive to see your driving statistics here.")
+                                        .font(.system(size: 16))
+                                        .foregroundColor(.white.opacity(0.8))
+                                        .multilineTextAlignment(.center)
+                                        .padding(.horizontal, 20)
+                                    
+                                    Button(action: {
+                                        presentationMode.wrappedValue.dismiss()
+                                    }) {
+                                        HStack {
+                                            Image(systemName: "car.fill")
+                                            Text("Start Driving")
+                                        }
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 20)
+                                        .padding(.vertical, 12)
+                                        .background(Color.green.opacity(0.8))
+                                        .cornerRadius(15)
+                                        .shadow(color: Color.black.opacity(0.2), radius: 5, x: 0, y: 3)
+                                    }
+                                    .padding(.top, 10)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 30)
+                                .background(Color.white.opacity(0.1))
+                                .cornerRadius(15)
+                                .padding(.horizontal)
+                            } else {
+                                // Stats grid for users with driving data
+                                LazyVGrid(columns: [
+                                    GridItem(.flexible()),
+                                    GridItem(.flexible())
+                                ], spacing: 15) {
+                                    StatCard(title: "Total Drives", value: "\(totalDrives)", icon: "number.circle.fill")
+                                    StatCard(title: "Total Distance", value: "\(totalDistance) mi", icon: "map.fill")
+                                    StatCard(title: "Drive Time", value: formatMinutes(totalDuration), icon: "clock.fill")
+                                    StatCard(title: "Avg Speed", value: "\(avgSpeed) mph", icon: "speedometer")
+                                    StatCard(title: "Top Speed", value: "\(topSpeed) mph", icon: "flame.fill")
+                                    StatCard(title: "Fuel Saved", value: "0.0 gal", icon: "leaf.fill")
+                                }
+                                .padding(.horizontal)
                             }
-                            .padding(.horizontal)
                         }
                         .padding(.vertical)
                         
@@ -562,18 +634,18 @@ struct ProfileView: View {
                         }
                         .padding(.vertical)
                         
-                        // Recent routes
+                        // Safety Tips instead of Recent Routes for new users
                         VStack(spacing: 10) {
-                            Text("Recent Routes")
+                            Text("Safety Tips")
                                 .font(.headline)
                                 .foregroundColor(.white)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.leading)
                             
                             VStack(spacing: 15) {
-                                RouteCard(from: "Home", to: "Work", date: "Today", distance: "8.7 mi")
-                                RouteCard(from: "Work", to: "Gym", date: "Yesterday", distance: "3.2 mi")
-                                RouteCard(from: "Gym", to: "Home", date: "Yesterday", distance: "5.5 mi")
+                                SafetyTipCard(icon: "exclamationmark.shield.fill", title: "Keep a Safe Distance", description: "Maintain at least 3 seconds of following distance")
+                                SafetyTipCard(icon: "hand.raised.fill", title: "Avoid Distractions", description: "Never text and drive, use hands-free calling")
+                                SafetyTipCard(icon: "speedometer", title: "Follow Speed Limits", description: "Adjust your speed based on road conditions")
                             }
                             .padding(.horizontal)
                         }
@@ -879,6 +951,40 @@ struct ThemeButton: View {
         }, perform: {
             action()
         })
+    }
+}
+
+// Safety Tip Card component
+struct SafetyTipCard: View {
+    let icon: String
+    let title: String
+    let description: String
+    
+    var body: some View {
+        HStack(spacing: 15) {
+            Image(systemName: icon)
+                .font(.system(size: 24))
+                .foregroundColor(.white)
+                .frame(width: 40, height: 40)
+                .background(Color.white.opacity(0.2))
+                .cornerRadius(10)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white)
+                
+                Text(description)
+                    .font(.system(size: 14))
+                    .foregroundColor(.white.opacity(0.8))
+                    .lineLimit(2)
+            }
+            
+            Spacer()
+        }
+        .padding()
+        .background(Color.white.opacity(0.1))
+        .cornerRadius(15)
     }
 }
 
