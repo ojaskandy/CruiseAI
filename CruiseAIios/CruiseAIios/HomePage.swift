@@ -84,142 +84,145 @@ struct HomePage: View {
                     .edgesIgnoringSafeArea(.all)
                     .animation(.easeInOut(duration: 0.5), value: appState.theme)
                 
-                // Content
-                VStack(spacing: 20) {
-                    // Header with time and logo
-                    HStack {
-                        // Current time
-                        Text(timeString)
-                            .font(.system(size: 36, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
-                            .onReceive(timer) { _ in
-                                currentTime = Date()
-                            }
+                // Content in ScrollView for scrollability
+                ScrollView {
+                    VStack(spacing: 20) {
+                        // Header with time and logo
+                        HStack {
+                            // Current time
+                            Text(timeString)
+                                .font(.system(size: 36, weight: .bold, design: .rounded))
+                                .foregroundColor(.white)
+                                .onReceive(timer) { _ in
+                                    currentTime = Date()
+                                }
+                            
+                            Spacer()
+                            
+                            // Logo
+                            Image(systemName: "car.fill")
+                                .font(.system(size: 40))
+                                .foregroundColor(.white)
+                                .shadow(color: Color.black.opacity(0.2), radius: 5, x: 0, y: 3)
+                                .scaleEffect(isAnimating ? 1.1 : 1.0)
+                                .animation(
+                                    Animation.easeInOut(duration: 1.5)
+                                        .repeatForever(autoreverses: true),
+                                    value: isAnimating
+                                )
+                        }
+                        .padding(.horizontal, 25)
+                        .padding(.top, 20)
                         
-                        Spacer()
-                        
-                        // Logo
-                        Image(systemName: "car.fill")
-                            .font(.system(size: 40))
+                        // Title
+                        Text("CruiseAI")
+                            .font(.system(size: 48, weight: .bold, design: .rounded))
                             .foregroundColor(.white)
                             .shadow(color: Color.black.opacity(0.2), radius: 5, x: 0, y: 3)
-                            .scaleEffect(isAnimating ? 1.1 : 1.0)
-                            .animation(
-                                Animation.easeInOut(duration: 1.5)
-                                    .repeatForever(autoreverses: true),
-                                value: isAnimating
-                            )
-                    }
-                    .padding(.horizontal, 25)
-                    .padding(.top, 20)
-                    
-                    // Title
-                    Text("CruiseAI")
-                        .font(.system(size: 48, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
-                        .shadow(color: Color.black.opacity(0.2), radius: 5, x: 0, y: 3)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.top, 10)
-                    
-                    // Quick Actions Section
-                    VStack(alignment: .leading, spacing: 15) {
-                        Text("Quick Actions")
-                            .font(.system(size: 24, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
-                            .padding(.leading, 5)
-                            .padding(.bottom, 5)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, 10)
                         
-                        // Grid of action buttons
-                        LazyVGrid(columns: [
-                            GridItem(.flexible()),
-                            GridItem(.flexible())
-                        ], spacing: 20) {
-                            // Start a Drive
-                            QuickActionButton(
-                                icon: "car.circle.fill",
-                                title: "Start a Drive",
-                                color: Color.green
-                            ) {
-                                showMonitorView = true
-                            }
+                        // Quick Actions Section
+                        VStack(alignment: .leading, spacing: 15) {
+                            Text("Quick Actions")
+                                .font(.system(size: 24, weight: .bold, design: .rounded))
+                                .foregroundColor(.white)
+                                .padding(.leading, 5)
+                                .padding(.bottom, 5)
                             
-                            // Maps
-                            QuickActionButton(
-                                icon: "map.fill",
-                                title: "Maps",
-                                color: Color.blue
-                            ) {
-                                showMapsPicker = true
-                            }
-                            
-                            // History
-                            QuickActionButton(
-                                icon: "clock.fill",
-                                title: "History",
-                                color: Color.orange
-                            ) {
-                                showHistoryView = true
-                            }
-                            
-                            // Profile
-                            QuickActionButton(
-                                icon: "person.fill",
-                                title: "Profile",
-                                color: Color.purple
-                            ) {
-                                showProfileView = true
+                            // Grid of action buttons
+                            LazyVGrid(columns: [
+                                GridItem(.flexible()),
+                                GridItem(.flexible())
+                            ], spacing: 20) {
+                                // Start a Drive
+                                QuickActionButton(
+                                    icon: "car.circle.fill",
+                                    title: "Start a Drive",
+                                    color: Color.green
+                                ) {
+                                    showMonitorView = true
+                                }
+                                
+                                // Maps
+                                QuickActionButton(
+                                    icon: "map.fill",
+                                    title: "Maps",
+                                    color: Color.blue
+                                ) {
+                                    showMapsPicker = true
+                                }
+                                
+                                // History
+                                QuickActionButton(
+                                    icon: "clock.fill",
+                                    title: "History",
+                                    color: Color.orange
+                                ) {
+                                    showHistoryView = true
+                                }
+                                
+                                // Profile
+                                QuickActionButton(
+                                    icon: "person.fill",
+                                    title: "Profile",
+                                    color: Color.purple
+                                ) {
+                                    showProfileView = true
+                                }
                             }
                         }
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 15)
-                    .background(Color.white.opacity(0.1))
-                    .cornerRadius(20)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 20)
-                    
-                    // Expandable Info Sections
-                    VStack(spacing: 15) {
-                        // How It Works button
-                        ExpandableInfoButton(
-                            title: "How It Works",
-                            icon: "info.circle.fill",
-                            color: Color.blue,
-                            content: {
-                                VStack(alignment: .leading, spacing: 15) {
-                                    InfoRow(icon: "camera.fill", title: "Object Detection", description: "Uses your phone's camera to detect vehicles, pedestrians, and road signs in real time")
-                                    InfoRow(icon: "rectangle.dashed", title: "Visual Feedback", description: "Displays bounding boxes directly on the live camera feed")
-                                    InfoRow(icon: "arrow.left.and.right", title: "Depth Estimation", description: "Estimates relative depth to understand object proximity")
-                                    InfoRow(icon: "speedometer", title: "Speed Tracking", description: "Tracks your current speed using GPS and shows it on-screen")
-                                    InfoRow(icon: "hand.raised.fill", title: "Simple & Safe", description: "Designed for safety and simplicity—no extra hardware needed")
-                                }
-                                .padding(.vertical, 10)
-                            }
-                        )
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 15)
+                        .background(Color.white.opacity(0.1))
+                        .cornerRadius(20)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 20)
                         
-                        // Coming Soon button with animation
-                        ExpandableInfoButton(
-                            title: "Coming Soon",
-                            icon: "sparkles",
-                            color: Color.purple,
-                            isGlowing: true,
-                            content: {
-                                VStack(alignment: .leading, spacing: 15) {
-                                    InfoRow(icon: "exclamationmark.triangle.fill", title: "Lane Drift Detection", description: "Visual and audio alerts when drifting from your lane")
-                                    InfoRow(icon: "car.2.fill", title: "Collision Warning", description: "Advanced warning system based on depth + motion")
-                                    InfoRow(icon: "stopsign.fill", title: "Traffic Violation Detection", description: "Red light and stop sign violation detection")
-                                    InfoRow(icon: "chart.bar.fill", title: "Driver Analytics", description: "Smart trip summaries and driver score analytics")
-                                    InfoRow(icon: "message.fill", title: "Guardian Alerts", description: "Seamless SMS alerts for parents or guardians")
+                        // Expandable Info Sections
+                        VStack(spacing: 15) {
+                            // How It Works button
+                            ExpandableInfoButton(
+                                title: "How It Works",
+                                icon: "info.circle.fill",
+                                color: Color.blue,
+                                content: {
+                                    VStack(alignment: .leading, spacing: 15) {
+                                        InfoRow(icon: "camera.fill", title: "Object Detection", description: "Uses your phone's camera to detect vehicles, pedestrians, and road signs in real time")
+                                        InfoRow(icon: "rectangle.dashed", title: "Visual Feedback", description: "Displays bounding boxes directly on the live camera feed")
+                                        InfoRow(icon: "arrow.left.and.right", title: "Depth Estimation", description: "Estimates relative depth to understand object proximity")
+                                        InfoRow(icon: "speedometer", title: "Speed Tracking", description: "Tracks your current speed using GPS and shows it on-screen")
+                                        InfoRow(icon: "hand.raised.fill", title: "Simple & Safe", description: "Designed for safety and simplicity—no extra hardware needed")
+                                    }
+                                    .padding(.vertical, 10)
                                 }
-                                .padding(.vertical, 10)
-                            }
-                        )
+                            )
+                            
+                            // Coming Soon button with animation
+                            ExpandableInfoButton(
+                                title: "Coming Soon",
+                                icon: "sparkles",
+                                color: Color.purple,
+                                isGlowing: true,
+                                content: {
+                                    VStack(alignment: .leading, spacing: 15) {
+                                        InfoRow(icon: "exclamationmark.triangle.fill", title: "Lane Drift Detection", description: "Visual and audio alerts when drifting from your lane")
+                                        InfoRow(icon: "car.2.fill", title: "Collision Warning", description: "Advanced warning system based on depth + motion")
+                                        InfoRow(icon: "stopsign.fill", title: "Traffic Violation Detection", description: "Red light and stop sign violation detection")
+                                        InfoRow(icon: "chart.bar.fill", title: "Driver Analytics", description: "Smart trip summaries and driver score analytics")
+                                        InfoRow(icon: "message.fill", title: "Guardian Alerts", description: "Seamless SMS alerts for parents or guardians")
+                                    }
+                                    .padding(.vertical, 10)
+                                }
+                            )
+                        }
+                        .padding(.horizontal, 20)
+                        
+                        // Add some padding at the bottom to ensure content doesn't get hidden behind the tab bar
+                        Spacer(minLength: 100)
                     }
-                    .padding(.horizontal, 20)
-                    
-                    Spacer()
+                    .padding(.vertical)
                 }
-                .padding(.vertical)
                 
                 // Floating tab bar at the bottom
                 VStack {
