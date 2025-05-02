@@ -18,7 +18,7 @@ struct DriveView: View {
     var body: some View {
         ZStack {
             // Camera view with object detection and depth estimation
-            CameraView(appState: appState)
+            MainCameraView(appState: appState)
                 .edgesIgnoringSafeArea(.all)
             
             VStack {

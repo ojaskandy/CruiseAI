@@ -75,7 +75,7 @@ class DepthEstimationManager {
         
         // Create input for the model
         do {
-            let input = try MLFeatureValue(pixelBuffer: resizedPixelBuffer)
+            let input = MLFeatureValue(pixelBuffer: resizedPixelBuffer)
             let inputFeatures = try MLDictionaryFeatureProvider(dictionary: ["image": input])
             
             // Get prediction

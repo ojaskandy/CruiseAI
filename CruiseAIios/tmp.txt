@@ -1,0 +1,101 @@
+72:// Add TripStore for storing trip data locally
+73-// Removing this whole class since it's already defined in TripStore.swift
+74-
+75-public struct DrivePage: View {
+76-    @Environment(\.presentationMode) var presentationMode
+77-    @StateObject private var cameraManager = DrivePageCameraManager()
+78-    @StateObject private var locationManager = LocationManager()
+79-    @ObservedObject var appState: AppState
+80-    
+81-    // State variables
+82-    @State private var showingExitAlert = false
+83-    @State private var showingTripSummary = false
+84-    @State private var mapTrackingMode: MKUserTrackingMode = .follow
+85-    
+86-    // Navigation state
+87-    @State private var showingSearchSheet = false
+88-    @State private var searchQuery = ""
+89-    @State private var searchResults: [MKMapItem] = []
+90-    @State private var selectedDestination: MKMapItem?
+91-    @State private var route: MKRoute?
+92-    @State private var showingDirections = false
+93-    @State private var currentStepIndex = 0
+94-    @State private var estimatedArrival: Date?
+95-    @State private var remainingDistance: CLLocationDistance = 0
+96-    @State private var remainingTime: TimeInterval = 0
+97-    
+98-    // Trip tracking
+99-    @State private var showingShareSheet = false
+100-    @State private var tripStartTime: Date?
+101-    @State private var tripEndTime: Date?
+102-    @State private var tripDistance: Double = 0.0
+103-    @State private var tripTopSpeed: Double = 0.0
+104-    @State private var tripAvgSpeed: Double = 0.0
+105-    @State private var speedReadings: [Double] = []
+106-    @State private var locationHistory: [CLLocationCoordinate2D] = []
+107-    
+108-    // Speed warning
+109-    @State private var showingSpeedWarning = false
+110-    @State private var speedWarningOpacity = 0.0
+111-    
+112-    // Camera view properties
+113-    @State private var cameraViewOpacity = 1.0
+114-    
+115-    // Function to pop to root view (home page) - simplify this
+116-    func navigateToHomePage() {
+117-        presentationMode.wrappedValue.dismiss()
+118-    }
+119-    
+120-    // Public initializer to ensure it's accessible from other modules
+121-    public init(appState: AppState) {
+122-        self.appState = appState
+123-    }
+124-    
+125-    public var body: some View {
+126-        ZStack {
+127-            // Theme-based gradient background
+128-            LinearGradient(
+129-                gradient: Gradient(colors: appState.theme.gradientColors),
+130-                startPoint: .top,
+131-                endPoint: .bottom
+132-            )
+133-            .edgesIgnoringSafeArea(.all)
+134-            .animation(.easeInOut(duration: 0.5), value: appState.theme.id)
+135-            
+136-            if !cameraManager.isAuthorized {
+137-                // Modern camera permission view
+138-                VStack(spacing: 20) {
+139-                    Spacer()
+140-                    
+141-                    Image(systemName: "camera.fill")
+142-                        .font(.system(size: 60))
+143-                        .foregroundColor(.white.opacity(0.9))
+144-                        .padding()
+145-                        .background(
+146-                            Color.white.opacity(0.15)
+147-                                .overlay(
+148-                                    Color.white.opacity(0.1)
+149-                                        .blur(radius: DesignConstants.glassBlur)
+150-                                )
+151-                        )
+152-                        .clipShape(Circle())
+153-                        .shadow(color: Color.black.opacity(0.2), radius: 15)
+154-                        .overlay(
+155-                            Circle()
+156-                                .stroke(Color.white.opacity(0.2), lineWidth: 1)
+157-                        )
+158-                    
+159-                    Text("Camera Access Required")
+160-                        .font(.system(size: 24, weight: .bold, design: .rounded))
+161-                        .foregroundColor(.white)
+162-                    
+163-                    Text("Please grant permission to access your camera for object detection and safety features.")
+164-                        .font(.system(size: 17, weight: .medium, design: .rounded))
+165-                        .foregroundColor(.white.opacity(0.9))
+166-                        .multilineTextAlignment(.center)
+167-                        .padding(.horizontal, 40)
+168-                    
+169-                    // Camera access button
+170-                    Button {
+171-                        // Request camera permission using AVCaptureDevice API directly
+172-                        AVCaptureDevice.requestAccess(for: .video) { granted in

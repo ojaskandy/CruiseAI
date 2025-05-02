@@ -10,26 +10,51 @@ import AVFoundation
 import AudioToolbox
 import CoreLocation
 import UIKit
+import MapKit
+import UserNotifications
+
+// Map annotation for trip summary
+struct TripMapAnnotation: Identifiable {
+    let id: String
+    let coordinate: CLLocationCoordinate2D
+    let title: String
+}
 
 // A wrapper view that handles camera permission and refreshes when permission changes
-struct CameraView: View {
+public struct MainCameraView: View {
     @Environment(\.presentationMode) var presentationMode
     @StateObject private var cameraManager = CameraManager()
     @StateObject private var modelIntegration = ModelIntegration()
     @StateObject private var locationManager = LocationManager()
     @ObservedObject var appState: AppState
+    @Environment(\.scenePhase) private var scenePhase
+    
+    // Public initializer to ensure it's accessible from other modules
+    public init(appState: AppState) {
+        self.appState = appState
+    }
     
     // State for drive button
     @State private var isDriving = false
+    @State private var isLoading = false // Loading state for drive initialization
+    @State private var loadingProgress: CGFloat = 0.0 // Progress for the car animation
+    @State private var loadingMessage = "Getting ready to start drive..." // Current loading message
     @State private var useMetricSystem = false // false = MPH, true = KPH
     @State private var showingExitAlert = false
     @State private var showingShareSheet = false
     @State private var showingSpeedWarning = false
     @State private var speedWarningOpacity: Double = 0.0
     @State private var speedWarningMessage: String = ""
+    @State private var isAnimating = false
+    @State private var showingMapView = false // Track when to show the map view
     
     // Speech synthesizer for speed warnings
     let speechSynthesizer = AVSpeechSynthesizer()
+    
+    // Speed warning throttling
+    @State private var lastSpeedWarningTime: Date? = nil
+    @State private var lastSpeedWarningRoad: String? = nil
+    private let speedWarningInterval: TimeInterval = 30.0 // 30 seconds between warnings
     
     // Trip tracking
     @State private var tripStartTime: Date? = nil
@@ -39,6 +64,9 @@ struct CameraView: View {
     @State private var tripAvgSpeed: Double = 0.0 // in m/s
     @State private var lastLocation: CLLocation? = nil
     @State private var speedReadings: [Double] = []
+    @State private var startLocation: CLLocationCoordinate2D? = nil
+    @State private var endLocation: CLLocationCoordinate2D? = nil
+    @State private var locationHistory: [CLLocationCoordinate2D] = []
     
     // Color based on speed
     private var speedColor: Color {
@@ -55,7 +83,7 @@ struct CameraView: View {
         }
     }
     
-    var body: some View {
+    public var body: some View {
         ZStack {
             // Theme-based gradient background
             LinearGradient(
@@ -66,226 +94,369 @@ struct CameraView: View {
             .edgesIgnoringSafeArea(.all)
             .animation(.easeInOut(duration: 0.5), value: appState.theme)
             
-            if cameraManager.isAuthorized {
-                ZStack {
-                    // Camera preview with model processing
-                    CameraPreviewView(cameraManager: cameraManager, modelIntegration: modelIntegration)
-                        .edgesIgnoringSafeArea(.all)
+            // Loading screen overlay
+            if isLoading {
+                LoadingView(
+                    progress: $loadingProgress,
+                    message: $loadingMessage,
+                    gradientColors: appState.theme.gradientColors
+                )
+                .frame(width: UIScreen.main.bounds.width * 0.9)
                 
-                    // Overlay with detection information
-                    VStack {
-                        HStack {
-                            // Detection stats
-                            VStack(alignment: .leading) {
-                                Text("Objects: \(modelIntegration.detectedObjects.count)")
-                                    .font(.headline)
-                                    .padding(8)
-                                    .background(Color.black.opacity(0.7))
-                                    .foregroundColor(Color.white)
-                                    .cornerRadius(8)
+            // Map view
+            } else if showingMapView {
+                DriveMapView(
+                    appState: appState,
+                    locationManager: locationManager,
+                    isDriving: $isDriving,
+                    showingShareSheet: $showingShareSheet,
+                    tripStartTime: $tripStartTime,
+                    tripEndTime: $tripEndTime,
+                    tripDistance: $tripDistance,
+                    tripTopSpeed: $tripTopSpeed,
+                    tripAvgSpeed: $tripAvgSpeed,
+                    speedReadings: $speedReadings,
+                    locationHistory: $locationHistory
+                )
+            
+            // Main camera view
+            } else if cameraManager.isAuthorized {
+                ZStack {
+                    // Camera preview with model processing and detection overlay
+                    ZStack {
+                        CameraPreviewView(cameraManager: cameraManager, modelIntegration: modelIntegration)
+                            .edgesIgnoringSafeArea(.all)
+                        
+                        // Modern detection overlay
+                        DetectionOverlayView(
+                            objects: modelIntegration.detectedObjects.map { object in
+                                DetectedObject(
+                                    label: object.label,
+                                    confidence: object.confidence,
+                                    boundingBox: object.boundingBox
+                                )
+                            },
+                            theme: appState.theme,
+                            screenSize: UIScreen.main.bounds.size
+                        )
+                        
+                        // Top bar with controls
+                        VStack {
+                            HStack {
+                                // Speedometer (only shown when location is authorized)
+                                if locationManager.authorizationStatus == .authorizedWhenInUse ||
+                                   locationManager.authorizationStatus == .authorizedAlways {
+                                    CompactSpeedometerView(
+                                        speed: useMetricSystem ? locationManager.speedKPH : locationManager.speedMPH,
+                                        maxSpeed: useMetricSystem ? 200 : 120,
+                                        useMetric: useMetricSystem,
+                                        theme: appState.theme
+                                    )
+                                    .onTapGesture {
+                                        useMetricSystem.toggle()
+                                    }
+                                }
                                 
-                                Text("Processing...")
-                                    .font(.caption)
-                                    .padding(4)
-                                    .background(Color.orange.opacity(0.6))
-                                    .foregroundColor(.white)
-                                    .cornerRadius(4)
-                                    .opacity(modelIntegration.isProcessing ? 1.0 : 0.0)
+                                Spacer()
+                                
+                                // Toggle processing button
+                                GlassButton(
+                                    theme: appState.theme,
+                                    title: "Toggle",
+                                    icon: "cpu"
+                                ) {
+                                    modelIntegration.toggleProcessing()
+                                }
                             }
-                            .padding(.leading, 8)
+                            .padding(.horizontal)
+                            .padding(.top, 8)
                             
                             Spacer()
                             
-                            // Speedometer (only shown when location is authorized)
-                            if locationManager.authorizationStatus == .authorizedWhenInUse || 
+                            // Modern speedometer in the center
+                            if locationManager.authorizationStatus == .authorizedWhenInUse ||
                                locationManager.authorizationStatus == .authorizedAlways {
-                                CompactSpeedometerView(locationManager: locationManager, useMetric: useMetricSystem)
-                                    .onTapGesture {
-                                        // Toggle between MPH and KPH
-                                        useMetricSystem.toggle()
-                                    }
-                            }
-                            
-                            // Toggle processing button
-                            Button {
-                                modelIntegration.toggleProcessing()
-                            } label: {
-                                Text("Toggle")
-                                    .font(.headline)
-                                    .padding(8)
-                                    .background(Color.black.opacity(0.6))
-                                    .foregroundColor(.green)
-                                    .cornerRadius(8)
-                            }
-                            .padding(.trailing, 8)
-                        }
-                        .padding(.top, 8)
-                        
-                        // Large speedometer in the center
-                        Spacer()
-                        
-                        // Large speedometer display
-                        ZStack {
-                            // Background for speedometer
-                            RoundedRectangle(cornerRadius: 20)
-                                .fill(Color.black.opacity(0.7))
-                                .frame(width: 250, height: 150)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 20)
-                                        .stroke(speedColor, lineWidth: 4)
+                                ModernSpeedometerView(
+                                    speed: useMetricSystem ? locationManager.speedKPH : locationManager.speedMPH,
+                                    maxSpeed: useMetricSystem ? 200 : 120,
+                                    useMetric: useMetricSystem,
+                                    theme: appState.theme
                                 )
-                            
-                            if locationManager.authorizationStatus == .authorizedWhenInUse || 
-                               locationManager.authorizationStatus == .authorizedAlways {
-                                // When location permission is granted
-                                VStack(spacing: 10) {
-                                    // Speed value
-                                    Text("\(Int(useMetricSystem ? locationManager.speedKPH : locationManager.speedMPH))")
-                                        .font(.system(size: 70, weight: .bold, design: .rounded))
-                                        .foregroundColor(.white)
-                                    
-                                    // Speed unit
-                                    Text(useMetricSystem ? "KILOMETERS PER HOUR" : "MILES PER HOUR")
-                                        .font(.system(size: 14, weight: .medium))
-                                        .foregroundColor(.gray)
-                                    
-                                    // Status indicator
-                                    Text(isDriving ? "RECORDING" : "TAP TO TOGGLE UNITS")
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundColor(isDriving ? .red : .green)
-                                        .padding(.top, 5)
-                                }
+                                .frame(width: 250, height: 250)
+                                .padding(.bottom, 20)
                             } else {
-                                // When location permission is not granted
-                                VStack(spacing: 10) {
-                                    Image(systemName: "location.slash.fill")
-                                        .font(.system(size: 40))
-                                        .foregroundColor(.orange)
-                                    
-                                    Text("Location Access Required")
-                                        .font(.headline)
-                                        .foregroundColor(.white)
-                                    
-                                    Button {
-                                        locationManager.requestPermission()
-                                    } label: {
-                                        Text("Enable Location")
-                                            .font(.subheadline)
-                                            .padding(.horizontal, 20)
-                                            .padding(.vertical, 8)
-                                            .background(Color.blue)
+                                // Location permission required view
+                                GlassContainer(theme: appState.theme) {
+                                    VStack(spacing: 15) {
+                                        Image(systemName: "location.slash.fill")
+                                            .font(.system(size: 40))
+                                            .foregroundColor(appState.theme.accentColor)
+                                        
+                                        Text("Location Access Required")
+                                            .font(.headline)
                                             .foregroundColor(.white)
-                                            .cornerRadius(8)
+                                        
+                                        GlassButton(
+                                            theme: appState.theme,
+                                            title: "Enable Location",
+                                            icon: "location.fill"
+                                        ) {
+                                            locationManager.requestPermission()
+                                        }
                                     }
+                                    .padding()
                                 }
+                                .frame(width: 250)
+                                .padding(.bottom, 20)
                             }
                         }
                         .onTapGesture {
-                            if locationManager.authorizationStatus == .authorizedWhenInUse || 
+                            // Toggle between MPH and KPH if authorized
+                            if locationManager.authorizationStatus == .authorizedWhenInUse ||
                                locationManager.authorizationStatus == .authorizedAlways {
-                                // Toggle between MPH and KPH
                                 useMetricSystem.toggle()
-                                
                                 // Provide haptic feedback
                                 let generator = UIImpactFeedbackGenerator(style: .medium)
                                 generator.impactOccurred()
                             }
                         }
                         
+                        // Modern object detection display
+                        if !modelIntegration.detectedObjects.isEmpty {
+                            GlassContainer(theme: appState.theme, padding: 15) {
+                                VStack(spacing: 12) {
+                                    HStack {
+                                        Image(systemName: "cube.fill")
+                                            .font(.system(size: 20))
+                                            .foregroundColor(appState.theme.accentColor)
+                                        
+                                        Text("Detected Objects")
+                                            .font(.system(size: 16, weight: .semibold))
+                                            .foregroundColor(.white)
+                                        
+                                        Spacer()
+                                        
+                                        Text("\(modelIntegration.detectedObjects.count)")
+                                            .font(.system(size: 16, weight: .bold))
+                                            .foregroundColor(appState.theme.accentColor)
+                                    }
+                                    
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        HStack(spacing: 10) {
+                                            ForEach(modelIntegration.detectedObjects.prefix(5), id: \.self) { object in
+                                                GlassContainer(theme: appState.theme, padding: 8) {
+                                                    HStack(spacing: 6) {
+                                                        Image(systemName: "viewfinder")
+                                                            .font(.system(size: 14))
+                                                            .foregroundColor(appState.theme.accentColor)
+                                                        
+                                                        Text(object.label)
+                                                            .font(.system(size: 14, weight: .medium))
+                                                            .foregroundColor(.white)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal, 20)
+                        }
+                        
                         Spacer()
                         
-                        VStack(spacing: 12) {
-                            // Start/Stop Drive button
-                            Button {
-                                toggleDriving()
-                            } label: {
-                                Text(isDriving ? "Stop Drive" : "Start Drive")
-                                    .font(.headline)
-                                    .padding()
-                                    .frame(maxWidth: 200)
-                                    .background(isDriving ? Color.red : Color.green)
-                                    .foregroundColor(.white)
-                                    .cornerRadius(12)
-                                    .shadow(radius: 3)
+                        VStack(spacing: 15) {
+                            // Start/Stop Drive button with glass effect
+                            GlassButton(
+                                theme: appState.theme,
+                                title: isDriving ? "Stop Drive" : "Start Drive",
+                                icon: isDriving ? "stop.circle.fill" : "play.circle.fill"
+                            ) {
+                                let isDrivingCopy = isDriving
+                                
+                                if !isDrivingCopy {
+                                    // Show loading screen before starting drive
+                                    isLoading = true
+                                    loadingProgress = 0.0
+                                    loadingMessage = "Getting ready to start drive..."
+                                    
+                                    // Simulate loading with a sequence of steps
+                                    let totalLoadingTime: TimeInterval = 5.0
+                                    
+                                    // Loading sequence
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                        self.updateProgress(progress: 0.2, message: "Loading models...")
+                                    }
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                        self.updateProgress(progress: 0.4, message: "Calibrating sensors...")
+                                    }
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                                        self.updateProgress(progress: 0.6, message: "Ensuring accuracy...")
+                                    }
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+                                        self.updateProgress(progress: 0.8, message: "Almost ready...")
+                                    }
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + totalLoadingTime) {
+                                        self.updateProgress(progress: 1.0, message: "Drive starting now!")
+                                        
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                            self.isLoading = false
+                                            self.showingMapView = true
+                                            self.isDriving = true
+                                            self.tripStartTime = Date()
+                                            self.tripEndTime = nil
+                                            self.tripDistance = 0.0
+                                            self.tripTopSpeed = 0.0
+                                            self.speedReadings = []
+                                            self.lastLocation = nil
+                                            self.locationManager.startUpdatingLocation()
+                                            
+                                            // Request notification permission if needed
+                                            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
+                                                if granted {
+                                                    print("Notification permission granted")
+                                                } else if let error = error {
+                                                    print("Notification permission error: \(error)")
+                                                }
+                                            }
+                                            
+                                            AudioServicesPlaySystemSound(1519)
+                                        }
+                                    }
+                                } else {
+                                    isDriving = false
+                                    tripEndTime = Date()
+                                    locationManager.stopUpdatingLocation()
+                                    BackgroundManager.shared.endBackgroundSession()
+                                    
+                                    if !speedReadings.isEmpty {
+                                        tripAvgSpeed = speedReadings.reduce(0, +) / Double(speedReadings.count)
+                                    }
+                                    
+                                    showingShareSheet = true
+                                    AudioServicesPlaySystemSound(1519)
+                                }
                             }
                             
-                            // Detection indicator (only shown when objects are detected)
+                            // Detection indicator with glass effect
                             if !modelIntegration.detectedObjects.isEmpty {
-                                Text("OBJECTS DETECTED")
-                                    .font(.title)
-                                    .bold()
-                                    .padding()
-                                    .background(Color.red.opacity(0.8))
-                                    .foregroundColor(.white)
-                                    .cornerRadius(12)
+                                GlassContainer(theme: appState.theme, padding: 12) {
+                                    HStack(spacing: 10) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .font(.system(size: 24))
+                                            .foregroundColor(appState.theme.accentColor)
+                                        
+                                        Text("OBJECTS DETECTED")
+                                            .font(.system(size: 20, weight: .bold))
+                                            .foregroundColor(.white)
+                                    }
+                                }
+                                .frame(maxWidth: 300)
                             }
                         }
-                        .padding(.bottom, 20)
+                        .padding(.bottom, 30)
                     }
+                    
                 }
+                
             } else if locationManager.authorizationStatus == .denied || locationManager.authorizationStatus == .restricted {
-                // Location permission denied
-                VStack {
+                // Modern permission denied view
+                VStack(spacing: 30) {
                     Spacer()
-                    Text("Camera access is required")
-                        .font(.headline)
-                    Text("Please grant permission in Settings")
-                        .font(.subheadline)
-                        .padding(.top, 4)
                     
-                    Button {
-                        cameraManager.checkPermission()
-                    } label: {
-                        Text("Check Camera Permission")
-                            .padding()
-                            .background(Color.blue)
-                            .foregroundColor(.white)
-                            .cornerRadius(8)
+                    // Camera permission section
+                    GlassContainer(theme: appState.theme) {
+                        VStack(spacing: 15) {
+                            Image(systemName: "camera.slash.fill")
+                                .font(.system(size: 40))
+                                .foregroundColor(appState.theme.accentColor)
+                            
+                            Text("Camera Access Required")
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundColor(.white)
+                            
+                            Text("Please grant permission in Settings")
+                                .font(.system(size: 16))
+                                .foregroundColor(.white.opacity(0.8))
+                                .multilineTextAlignment(.center)
+                            
+                            GlassButton(
+                                theme: appState.theme,
+                                title: "Check Camera Permission",
+                                icon: "camera.fill"
+                            ) {
+                                cameraManager.checkPermission()
+                            }
+                        }
+                        .padding()
                     }
-                    .padding(.top, 20)
                     
-                    Text("Location access is required for speedometer")
-                        .font(.headline)
-                        .padding(.top, 20)
-                    
-                    Button {
-                        locationManager.requestPermission()
-                    } label: {
-                        Text("Check Location Permission")
-                            .padding()
-                            .background(Color.blue)
-                            .foregroundColor(.white)
-                            .cornerRadius(8)
+                    // Location permission section
+                    GlassContainer(theme: appState.theme) {
+                        VStack(spacing: 15) {
+                            Image(systemName: "location.slash.fill")
+                                .font(.system(size: 40))
+                                .foregroundColor(appState.theme.accentColor)
+                            
+                            Text("Location Access Required")
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundColor(.white)
+                            
+                            Text("Location access is needed for speedometer functionality")
+                                .font(.system(size: 16))
+                                .foregroundColor(.white.opacity(0.8))
+                                .multilineTextAlignment(.center)
+                            
+                            GlassButton(
+                                theme: appState.theme,
+                                title: "Check Location Permission",
+                                icon: "location.fill"
+                            ) {
+                                locationManager.requestPermission()
+                            }
+                        }
+                        .padding()
                     }
-                    .padding(.top, 20)
                     
                     Spacer()
                 }
-                .padding()
+                .padding(.horizontal)
+                
             } else {
-                // Camera permission denied
+                // Modern camera permission denied view
                 VStack {
                     Spacer()
-                    Text("Camera access is required")
-                        .font(.headline)
-                    Text("Please grant permission in Settings")
-                        .font(.subheadline)
-                        .padding(.top, 4)
                     
-                    Button {
-                        cameraManager.checkPermission()
-                    } label: {
-                        Text("Check Permission Again")
-                            .padding()
-                            .background(Color.blue)
-                            .foregroundColor(.white)
-                            .cornerRadius(8)
+                    GlassContainer(theme: appState.theme) {
+                        VStack(spacing: 15) {
+                            Image(systemName: "camera.slash.fill")
+                                .font(.system(size: 40))
+                                .foregroundColor(appState.theme.accentColor)
+                            
+                            Text("Camera Access Required")
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundColor(.white)
+                            
+                            Text("Please grant permission in Settings to use CruiseAI's driving features")
+                                .font(.system(size: 16))
+                                .foregroundColor(.white.opacity(0.8))
+                                .multilineTextAlignment(.center)
+                            
+                            GlassButton(
+                                theme: appState.theme,
+                                title: "Check Permission Again",
+                                icon: "camera.fill"
+                            ) {
+                                cameraManager.checkPermission()
+                            }
+                        }
+                        .padding()
                     }
-                    .padding(.top, 20)
                     
                     Spacer()
                 }
-                .padding()
+                .padding(.horizontal)
             }
         }
         .navigationBarTitle("Drive Monitor", displayMode: .inline)
@@ -311,6 +482,7 @@ struct CameraView: View {
                 message: Text("Are you sure you want to exit? Your current drive will be stopped."),
                 primaryButton: .destructive(Text("Exit")) {
                     locationManager.stopUpdatingLocation()
+                    BackgroundManager.shared.endBackgroundSession()
                     presentationMode.wrappedValue.dismiss()
                 },
                 secondaryButton: .cancel()
@@ -318,57 +490,225 @@ struct CameraView: View {
         }
         .sheet(isPresented: $showingShareSheet) {
             TripSummaryView(
-                startTime: tripStartTime ?? Date(),
-                endTime: tripEndTime ?? Date(),
-                distance: tripDistance,
-                topSpeed: tripTopSpeed,
+                tripStartTime: tripStartTime ?? Date(),
+                tripDuration: tripEndTime?.timeIntervalSince(tripStartTime ?? Date()) ?? 0,
+                tripDistance: tripDistance,
                 avgSpeed: tripAvgSpeed,
-                useMetric: useMetricSystem,
-                appState: appState
+                maxSpeed: tripTopSpeed,
+                isPresented: $showingShareSheet
             )
+            .preferredColorScheme(.dark)
         }
         .onAppear {
             cameraManager.checkPermission()
             locationManager.requestPermission()
             
             // Set up location updates observer
-            NotificationCenter.default.addObserver(forName: NSNotification.Name("LocationUpdate"), object: nil, queue: .main) { [self] notification in
-                if let location = notification.object as? CLLocation, isDriving {
-                    updateTripMetrics(with: location)
+            NotificationCenter.default.addObserver(forName: NSNotification.Name("LocationUpdate"), object: nil, queue: .main) { notification in
+                if let location = notification.object as? CLLocation, self.isDriving {
+                    self.updateTripMetrics(location: location)
                 }
             }
             
             // Set up speed limit warning observer
-            NotificationCenter.default.addObserver(forName: NSNotification.Name("SpeedLimitExceeded"), object: nil, queue: .main) { [self] notification in
+            NotificationCenter.default.addObserver(forName: NSNotification.Name("SpeedLimitExceeded"), object: nil, queue: .main) { notification in
                 if let userInfo = notification.userInfo,
                    let speed = userInfo["speed"] as? Double,
                    let limit = userInfo["limit"] as? Double {
-                    showSpeedWarning(speed: speed, limit: limit)
+                    self.showSpeedWarning(speed: speed, limit: limit)
                 }
             }
         }
-        
-        // Add speed warning overlay
+        .onAppear {
+            isAnimating = true
+        }
+        // Add modern speed warning overlay
         .overlay(
             ZStack {
                 if showingSpeedWarning {
-                    VStack {
-                        Text("SPEED")
-                            .font(.system(size: 60, weight: .heavy))
-                            .foregroundColor(.red)
-                        
-                        Text(speedWarningMessage)
-                            .font(.title)
-                            .foregroundColor(.white)
-                            .multilineTextAlignment(.center)
+                    GlassContainer(theme: appState.theme, padding: 30) {
+                        VStack(spacing: 15) {
+                            // Warning icon with pulsing animation
+                            Image(systemName: "speedometer")
+                                .font(.system(size: 48))
+                                .foregroundColor(appState.theme.accentColor)
+                                .scaleEffect(isAnimating ? 1.1 : 1.0)
+                                .animation(
+                                    Animation.easeInOut(duration: 1.0)
+                                        .repeatForever(autoreverses: true),
+                                    value: isAnimating
+                                )
+                            
+                            Text("SPEED WARNING")
+                                .font(.system(size: 28, weight: .heavy))
+                                .foregroundColor(.white)
+                            
+                            Text(speedWarningMessage)
+                                .font(.title2)
+                                .foregroundColor(.white.opacity(0.9))
+                                .multilineTextAlignment(.center)
+                        }
                     }
-                    .padding(30)
-                    .background(Color.black.opacity(0.7))
-                    .cornerRadius(20)
+                    .frame(maxWidth: UIScreen.main.bounds.width * 0.9)
                     .opacity(speedWarningOpacity)
                 }
             }
         )
+        .onChange(of: scenePhase) { newPhase in
+            switch newPhase {
+            case .background:
+                if isDriving {
+                    // Configure for background operation
+                    cameraManager.configureForBackground()
+                    modelIntegration.objectDetectionManager?.configureForBackground()
+                    BackgroundManager.shared.startBackgroundSession()
+                }
+            case .active:
+                if isDriving {
+                    // Restore normal operation
+                    cameraManager.restoreNormalOperation()
+                    modelIntegration.objectDetectionManager?.restoreNormalOperation()
+                }
+            case .inactive:
+                break
+            @unknown default:
+                break
+            }
+        }
+    }
+    
+    // Update trip metrics with new location data
+    func updateTripMetrics(location: CLLocation) {
+        // Store the start location if this is the first update
+        if startLocation == nil {
+            startLocation = location.coordinate
+            print("Set start location: \(location.coordinate)")
+        }
+        
+        // Always update the end location
+        endLocation = location.coordinate
+        
+        // Add to location history
+        locationHistory.append(location.coordinate)
+        
+        // Update distance - only if we've moved more than the minimum threshold
+        if let lastLoc = lastLocation {
+            let newDistance = location.distance(from: lastLoc)
+            
+            // Improved filtering for GPS jitter
+            if newDistance > 10.0 &&
+               location.horizontalAccuracy < 20.0 &&
+               location.speed > 0.5 {
+                
+                tripDistance += newDistance
+                lastLocation = location
+                
+                print("Added distance: \(newDistance)m, Total: \(tripDistance)m")
+            } else {
+                print("Filtered out location update: distance=\(newDistance)m, accuracy=\(location.horizontalAccuracy)m, speed=\(location.speed)m/s")
+            }
+        } else {
+            // First location update
+            lastLocation = location
+            print("Set initial location: \(location.coordinate)")
+        }
+        
+        // Update speed readings
+        let currentSpeed = location.speed
+        if currentSpeed > 0 {
+            speedReadings.append(currentSpeed)
+            
+            // Update top speed
+            if currentSpeed > tripTopSpeed {
+                tripTopSpeed = currentSpeed
+                print("New top speed: \(tripTopSpeed) m/s")
+            }
+        }
+    }
+    
+    // Update loading progress with animation
+    private func updateProgress(progress: CGFloat, message: String) {
+        DispatchQueue.main.async {
+            withAnimation {
+                self.loadingProgress = progress
+                self.loadingMessage = message
+            }
+        }
+    }
+    
+    // Show speed warning when exceeding speed limit
+    func showSpeedWarning(speed: Double, limit: Double) {
+        // Get current road name (simplified - in a real app, you might use reverse geocoding)
+        let currentRoad = "Road-\(Int(limit))" // Use speed limit as a proxy for road identity
+        
+        // Check if we should show a warning based on time and road
+        let shouldShowWarning = shouldShowSpeedWarning(forRoad: currentRoad)
+        if !shouldShowWarning {
+            print("Suppressing speed warning: last warning was less than 30 seconds ago on the same road")
+            return
+        }
+        
+        // Update last warning time and road
+        lastSpeedWarningTime = Date()
+        lastSpeedWarningRoad = currentRoad
+        
+        // Create warning message
+        let speedInt = Int(speed)
+        let limitInt = Int(limit)
+        speedWarningMessage = "You are driving \(speedInt) mph in a \(limitInt) mph zone"
+        
+        // Show warning
+        withAnimation(.easeIn(duration: 0.3)) {
+            showingSpeedWarning = true
+            speedWarningOpacity = 1.0
+        }
+        
+        // Speak warning
+        let utterance = AVSpeechUtterance(string: "Speed limit \(limitInt). You are driving \(speedInt) miles per hour.")
+        utterance.rate = 0.5
+        utterance.volume = 1.0
+        utterance.pitchMultiplier = 1.2
+        speechSynthesizer.speak(utterance)
+        
+        // Play warning sound
+        AudioServicesPlaySystemSound(1521) // Strong vibration
+        
+        // Hide warning after delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            withAnimation(.easeOut(duration: 0.3)) {
+                self.speedWarningOpacity = 0.0
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                self.showingSpeedWarning = false
+            }
+        }
+    }
+    
+    // Helper method to determine if we should show a speed warning
+    private func shouldShowSpeedWarning(forRoad currentRoad: String) -> Bool {
+        // If this is a different road than the last warning, always show
+        if lastSpeedWarningRoad != currentRoad {
+            print("New road detected: showing speed warning")
+            return true
+        }
+        
+        // If we've never shown a warning before, show it
+        guard let lastWarningTime = lastSpeedWarningTime else {
+            print("First speed warning: showing")
+            return true
+        }
+        
+        // Check if enough time has passed since the last warning
+        let timeSinceLastWarning = Date().timeIntervalSince(lastWarningTime)
+        let shouldShow = timeSinceLastWarning >= speedWarningInterval
+        
+        if shouldShow {
+            print("Time since last warning: \(timeSinceLastWarning) seconds - showing warning")
+        } else {
+            print("Time since last warning: \(timeSinceLastWarning) seconds - suppressing warning")
+        }
+        
+        return shouldShow
     }
 }
 
@@ -377,12 +717,18 @@ class CameraManager: NSObject, ObservableObject {
     @Published var isAuthorized = false
     private var captureSession: AVCaptureSession?
     private var videoDataOutput: AVCaptureVideoDataOutput?
+    private var playerLayer: AVPlayerLayer?
+    private var player: AVPlayer?
     
     // Delegate to receive camera frames
     weak var frameDelegate: CameraFrameDelegate?
     
+    // Background state
+    private var isBackgroundMode = false
+    
     override init() {
         super.init()
+        print("CameraManager initialized")
         checkPermission()
     }
     
@@ -462,6 +808,9 @@ class CameraManager: NSObject, ObservableObject {
         self.captureSession = session
         self.videoDataOutput = videoOutput
         
+        // Set up PiP support
+        setupPictureInPicture()
+        
         // Start the capture session on a background thread
         print("Starting capture session...")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -472,6 +821,48 @@ class CameraManager: NSObject, ObservableObject {
     
     func getCaptureSession() -> AVCaptureSession? {
         return captureSession
+    }
+    
+    // MARK: - Background Support
+    
+    func configureForBackground() {
+        isBackgroundMode = true
+        
+        // Start PiP if available
+        startPictureInPicture()
+        
+        // Note: We're no longer reducing quality or frame rate
+        print("Configured for background operation at full quality")
+    }
+    
+    func restoreNormalOperation() {
+        isBackgroundMode = false
+        
+        // Stop PiP
+        stopPictureInPicture()
+        
+        print("Restored normal operation")
+    }
+    
+    // MARK: - Picture in Picture Support
+    
+    private func setupPictureInPicture() {
+        // Create a blank video source for PiP
+        let videoURL = Bundle.main.url(forResource: "blank", withExtension: "mp4") ?? URL(fileURLWithPath: "")
+        player = AVPlayer(url: videoURL)
+        playerLayer = AVPlayerLayer(player: player)
+        
+        if let playerLayer = playerLayer {
+            BackgroundManager.shared.setupPictureInPicture(with: playerLayer)
+        }
+    }
+    
+    private func startPictureInPicture() {
+        BackgroundManager.shared.startPictureInPicture()
+    }
+    
+    private func stopPictureInPicture() {
+        BackgroundManager.shared.stopPictureInPicture()
     }
 }
 
@@ -552,283 +943,25 @@ struct CameraPreviewView: UIViewRepresentable {
     
     // Simple coordinator class
     class Coordinator: NSObject, CameraFrameDelegate {
-        var modelIntegration: ModelIntegration?
+        // Use a weak reference to avoid retain cycles
+        weak var modelIntegration: ModelIntegration?
         
         func didReceiveFrame(_ pixelBuffer: CVPixelBuffer) {
-            modelIntegration?.processFrame(pixelBuffer)
-        }
-    }
-}
-
-// MARK: - Trip Tracking Methods
-extension CameraView {
-    // Toggle driving state and handle trip tracking
-    func toggleDriving() {
-        isDriving.toggle()
-        
-        if isDriving {
-            // Start a new trip
-            tripStartTime = Date()
-            tripEndTime = nil
-            tripDistance = 0.0
-            tripTopSpeed = 0.0
-            speedReadings = []
-            lastLocation = nil
-            
-            // Start location updates
-            locationManager.startUpdatingLocation()
-        } else {
-            // End the trip
-            tripEndTime = Date()
-            locationManager.stopUpdatingLocation()
-            
-            // Calculate average speed
-            if !speedReadings.isEmpty {
-                tripAvgSpeed = speedReadings.reduce(0, +) / Double(speedReadings.count)
-            }
-            
-            // Show share sheet
-            showingShareSheet = true
-        }
-        
-        // Play sound for feedback
-        AudioServicesPlaySystemSound(1519) // Vibration
-    }
-    
-    // Update trip metrics with new location data
-    func updateTripMetrics(with location: CLLocation) {
-        // Update distance
-        if let lastLoc = lastLocation {
-            let newDistance = location.distance(from: lastLoc)
-            tripDistance += newDistance
-        }
-        
-        // Update last location
-        lastLocation = location
-        
-        // Update speed readings
-        let currentSpeed = location.speed
-        if currentSpeed > 0 {
-            speedReadings.append(currentSpeed)
-            
-            // Update top speed
-            if currentSpeed > tripTopSpeed {
-                tripTopSpeed = currentSpeed
-            }
-        }
-    }
-    
-    // Show speed warning when exceeding speed limit
-    func showSpeedWarning(speed: Double, limit: Double) {
-        // Create warning message
-        let speedInt = Int(speed)
-        let limitInt = Int(limit)
-        speedWarningMessage = "You are driving \(speedInt) mph in a \(limitInt) mph zone"
-        
-        // Show warning
-        withAnimation(.easeIn(duration: 0.3)) {
-            showingSpeedWarning = true
-            speedWarningOpacity = 1.0
-        }
-        
-        // Speak warning
-        let utterance = AVSpeechUtterance(string: "Speed limit \(limitInt). You are driving \(speedInt) miles per hour.")
-        utterance.rate = 0.5
-        utterance.volume = 1.0
-        utterance.pitchMultiplier = 1.2
-        speechSynthesizer.speak(utterance)
-        
-        // Play warning sound
-        AudioServicesPlaySystemSound(1521) // Strong vibration
-        
-        // Hide warning after delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-            withAnimation(.easeOut(duration: 0.3)) {
-                self.speedWarningOpacity = 0.0
-            }
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                self.showingSpeedWarning = false
+            // Ensure we're on the main thread when accessing modelIntegration
+            DispatchQueue.main.async { [weak self] in
+                self?.modelIntegration?.processFrame(pixelBuffer)
             }
         }
     }
 }
 
-// Trip summary view with share functionality
-struct TripSummaryView: View {
-    let startTime: Date
-    let endTime: Date
-    let distance: Double // in meters
-    let topSpeed: Double // in m/s
-    let avgSpeed: Double // in m/s
-    let useMetric: Bool
-    @ObservedObject var appState: AppState
-    
-    @Environment(\.presentationMode) var presentationMode
-    @State private var showingShareSheet = false
-    
-    var body: some View {
-        NavigationView {
-            VStack(spacing: 20) {
-                // Header
-                Text("Trip Summary")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                    .padding(.top)
-                
-                // Trip details
-                VStack(spacing: 15) {
-                    SummaryRow(title: "Start Time", value: formatDate(startTime))
-                    SummaryRow(title: "End Time", value: formatDate(endTime))
-                    SummaryRow(title: "Duration", value: formatDuration(endTime.timeIntervalSince(startTime)))
-                    SummaryRow(title: "Distance", value: formatDistance(distance, useMetric: useMetric))
-                    SummaryRow(title: "Top Speed", value: formatSpeed(topSpeed, useMetric: useMetric))
-                    SummaryRow(title: "Average Speed", value: formatSpeed(avgSpeed, useMetric: useMetric))
-                }
-                .padding()
-                .background(Color.white.opacity(0.1))
-                .cornerRadius(12)
-                
-                Spacer()
-                
-                // Share button
-                Button {
-                    showingShareSheet = true
-                } label: {
-                    HStack {
-                        Image(systemName: "square.and.arrow.up")
-                        Text("Share Trip Details")
-                    }
-                    .font(.headline)
-                    .padding()
-                    .frame(maxWidth: .infinity)
-                    .background(Color.blue)
-                    .foregroundColor(.white)
-                    .cornerRadius(12)
-                }
-                .padding(.horizontal)
-                .padding(.bottom)
-            }
-            .padding()
-            .background(
-                LinearGradient(
-                    gradient: Gradient(colors: appState.theme.gradientColors),
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .edgesIgnoringSafeArea(.all)
-                .animation(.easeInOut(duration: 0.5), value: appState.theme)
-            )
-            .foregroundColor(.white)
-            .navigationBarItems(
-                trailing: Button("Done") {
-                    presentationMode.wrappedValue.dismiss()
-                }
-            )
-            .sheet(isPresented: $showingShareSheet) {
-                ShareSheet(items: [tripSummaryText])
-            }
-        }
-    }
-    
-    // Format date to string
-    private func formatDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .short
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
-    }
-    
-    // Format duration to string
-    private func formatDuration(_ seconds: TimeInterval) -> String {
-        let hours = Int(seconds) / 3600
-        let minutes = (Int(seconds) % 3600) / 60
-        let seconds = Int(seconds) % 60
-        
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            return String(format: "%d:%02d", minutes, seconds)
-        }
-    }
-    
-    // Format distance to string
-    private func formatDistance(_ meters: Double, useMetric: Bool) -> String {
-        if useMetric {
-            if meters >= 1000 {
-                return String(format: "%.2f km", meters / 1000)
-            } else {
-                return String(format: "%.0f m", meters)
-            }
-        } else {
-            let miles = meters / 1609.34
-            return String(format: "%.2f mi", miles)
-        }
-    }
-    
-    // Format speed to string
-    private func formatSpeed(_ metersPerSecond: Double, useMetric: Bool) -> String {
-        if useMetric {
-            let kph = metersPerSecond * 3.6
-            return String(format: "%.1f km/h", kph)
-        } else {
-            let mph = metersPerSecond * 2.23694
-            return String(format: "%.1f mph", mph)
-        }
-    }
-    
-    // Generate text summary for sharing
-    private var tripSummaryText: String {
-        """
-        CruiseAI Trip Summary
-        
-        Date: \(formatDate(startTime))
-        Duration: \(formatDuration(endTime.timeIntervalSince(startTime)))
-        Distance: \(formatDistance(distance, useMetric: useMetric))
-        Top Speed: \(formatSpeed(topSpeed, useMetric: useMetric))
-        Average Speed: \(formatSpeed(avgSpeed, useMetric: useMetric))
-        
-        Shared from CruiseAI
-        """
-    }
-}
+// MARK: - Trip Summary View
 
-// Summary row component
-struct SummaryRow: View {
-    let title: String
-    let value: String
-    
-    var body: some View {
-        HStack {
-            Text(title)
-                .font(.headline)
-                .foregroundColor(.white.opacity(0.8))
-            
-            Spacer()
-            
-            Text(value)
-                .font(.body)
-                .foregroundColor(.white)
-        }
-        .padding(.horizontal)
-    }
-}
+// Using TripSummaryView from TripSummaryView.swift
 
-// Share sheet using UIActivityViewController
-struct ShareSheet: UIViewControllerRepresentable {
-    let items: [Any]
-    
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
-        return controller
-    }
-    
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-
-// Preview provider
-struct CameraView_Previews: PreviewProvider {
+// Preview Provider
+struct MainCameraView_Previews: PreviewProvider {
     static var previews: some View {
-        Text("Preview not available")
+        MainCameraView(appState: AppState())
     }
 }

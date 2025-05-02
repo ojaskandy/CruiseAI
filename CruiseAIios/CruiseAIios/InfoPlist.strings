@@ -1,9 +1,0 @@
-/* 
-  InfoPlist.strings
-  CruiseAIios
-  
-  Created by Ojas Kandhare on 4/2/25.
-*/
-
-"NSCameraUsageDescription" = "CruiseAI needs access to your camera to record your drive.";
-"NSLocationWhenInUseUsageDescription" = "CruiseAI needs access to your location to track speed and distance for your drive.";
